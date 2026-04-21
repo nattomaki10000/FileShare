@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P2P ファイル送受信</title>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+JP:wght@300;400;500&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d0f14; --surface: #151820; --surface2: #1c2030;
+    --border: #2a2f45; --accent: #3d8ef0; --accent2: #1a6fd8;
+    --green: #22c55e; --red: #ef4444; --amber: #f59e0b;
+    --text: #e2e8f0; --muted: #64748b;
+    --mono: 'IBM Plex Mono', monospace; --sans: 'IBM Plex Sans JP', sans-serif;
+  }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--sans);
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; padding: 2rem 1rem;
+  }
+  .grid-bg {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      linear-gradient(rgba(61,142,240,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(61,142,240,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+  .container {
+    position: relative; z-index: 1; width: 100%; max-width: 640px;
+    display: flex; flex-direction: column; gap: 1.25rem;
+  }
+  header { display: flex; align-items: center; gap: 12px; padding: 0.5rem 0 1rem; }
+  .logo { width: 36px; height: 36px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+  .logo svg { width: 20px; height: 20px; fill: white; }
+  h1 { font-family: var(--mono); font-size: 18px; font-weight: 600; letter-spacing: -0.5px; }
+  .version { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; }
+  .card-label { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 2px; color: var(--muted); text-transform: uppercase; margin-bottom: 1rem; }
+  .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background 0.3s; flex-shrink: 0; }
+  .dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.connecting { background: var(--amber); animation: pulse 1s infinite; }
+  .dot.error { background: var(--red); }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.3} }
+  #status-text { font-size: 13px; color: var(--muted); }
+  .id-display { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--accent); letter-spacing: 1px; user-select: all; min-height: 42px; display: flex; align-items: center; }
+  button { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: var(--mono); font-size: 12px; font-weight: 500; padding: 0 14px; cursor: pointer; transition: all 0.15s; white-space: nowrap; height: 42px; display: flex; align-items: center; gap: 6px; }
+  button:hover { background: var(--border); border-color: #3a4060; }
+  button:active { transform: scale(0.97); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  button.primary:hover { background: var(--accent2); border-color: var(--accent2); }
+  button.danger { border-color: #4a1a1a; }
+  button.danger:hover { background: #2a0e0e; border-color: var(--red); color: var(--red); }
+  button.warn-btn { border-color: rgba(245,158,11,0.4); color: var(--amber); }
+  button.warn-btn:hover { background: rgba(245,158,11,0.1); border-color: var(--amber); }
+  .row { display: flex; gap: 8px; align-items: stretch; }
+  input[type="text"] { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: var(--mono); font-size: 14px; padding: 10px 14px; outline: none; transition: border-color 0.15s; height: 42px; }
+  input[type="text"]:focus { border-color: var(--accent); }
+  input[type="text"]::placeholder { color: var(--muted); font-size: 13px; }
+  input.error-input { border-color: var(--red) !important; }
+  .err-msg { font-family: var(--mono); font-size: 12px; color: var(--red); margin-top: 8px; display: none; }
+  .id-rule { font-family: var(--mono); font-size: 11px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--muted); line-height: 1.8; margin-bottom: 10px; }
+  .id-rule span { color: var(--accent); }
+  .id-edit-warn { font-size: 12px; color: var(--amber); line-height: 1.6; background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.2); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .drop-zone { border: 1.5px dashed var(--border); border-radius: 10px; padding: 2rem 1rem; text-align: center; cursor: pointer; transition: all 0.2s; position: relative; }
+  .drop-zone:hover, .drop-zone.dragover { border-color: var(--accent); background: rgba(61,142,240,0.04); }
+  .drop-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .drop-icon { font-size: 28px; margin-bottom: 8px; opacity: 0.5; }
+  .drop-text { font-size: 14px; color: var(--muted); }
+  .drop-hint { font-size: 12px; color: var(--muted); margin-top: 4px; opacity: 0.6; }
+  .file-selected { display: none; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-top: 10px; align-items: center; gap: 10px; }
+  .file-selected.show { display: flex; }
+  .file-icon { font-size: 20px; flex-shrink: 0; }
+  .file-info { flex: 1; overflow: hidden; }
+  .file-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-size { font-size: 11px; color: var(--muted); margin-top: 2px; font-family: var(--mono); }
+  .progress-wrap { display: none; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .progress-wrap.show { display: flex; }
+  .progress-label { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); font-family: var(--mono); }
+  .progress-bar-track { height: 6px; background: var(--surface2); border-radius: 99px; overflow: hidden; border: 1px solid var(--border); }
+  .progress-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #6eb4ff); border-radius: 99px; width: 0%; transition: width 0.15s ease; }
+  .progress-bar-fill.done { background: linear-gradient(90deg, var(--green), #4ade80); }
+  .log { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: var(--mono); font-size: 12px; color: var(--muted); max-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .log-entry { display: flex; gap: 8px; }
+  .log-time { color: #3a4060; flex-shrink: 0; }
+  .log-entry.info .log-msg { color: var(--text); }
+  .log-entry.success .log-msg { color: var(--green); }
+  .log-entry.warn .log-msg { color: var(--amber); }
+  .log-entry.error .log-msg { color: var(--red); }
+  .recv-list { display: flex; flex-direction: column; gap: 8px; }
+  .recv-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+  .recv-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .recv-name { font-size: 13px; font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .recv-size { font-size: 11px; color: var(--muted); font-family: var(--mono); flex-shrink: 0; }
+  .dl-btn { display: inline-flex; align-items: center; gap: 6px; background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3); border-radius: 6px; padding: 5px 12px; color: var(--green); font-size: 12px; font-family: var(--mono); cursor: pointer; text-decoration: none; transition: all 0.15s; width: 100%; justify-content: center; margin-top: 4px; }
+  .dl-btn:hover { background: rgba(34,197,94,0.2); }
+  .badge { font-family: var(--mono); font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 99px; letter-spacing: 0.5px; }
+  .badge-green { background: rgba(34,197,94,0.15); color: var(--green); }
+  .badge-amber { background: rgba(245,158,11,0.15); color: var(--amber); }
+  .badge-muted { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+  .disabled-overlay { opacity: 0.4; pointer-events: none; }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.6; padding: 8px 0; }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="grid-bg"></div>
+<div class="container">
+
+  <header>
+    <div class="logo"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
+    <div>
+      <h1>P2P Transfer</h1>
+      <div class="version">WebRTC · ブラウザ間直接転送</div>
+    </div>
+  </header>
+
+  <!-- あなたのID -->
+  <div class="card">
+    <div class="card-label">あなたのID</div>
+    <div class="status-row">
+      <div class="dot connecting" id="status-dot"></div>
+      <span id="status-text">IDを設定してください</span>
+    </div>
+
+    <!-- パネルA: 初回入力 -->
+    <div id="panel-setup">
+      <div class="id-rule">
+        使えるID: <span>英数字・ハイフン・アンダースコア</span>のみ（最大64文字）<br>
+        例: <span>taro</span> &nbsp;/&nbsp; <span>alice-2024</span> &nbsp;/&nbsp; <span>my_phone</span>
+      </div>
+      <div class="row">
+        <input type="text" id="id-input" placeholder="好きなIDを入力..." maxlength="64" autocomplete="off" spellcheck="false">
+        <button class="primary" id="id-set-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          このIDを使う
+        </button>
+      </div>
+      <div class="err-msg" id="id-setup-err"></div>
+    </div>
+
+    <!-- パネルB: ID確定済み -->
+    <div id="panel-confirmed" style="display:none;">
+      <div class="row">
+        <div class="id-display" id="my-id">—</div>
+        <button id="copy-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          コピー
+        </button>
+        <button class="warn-btn" id="change-id-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          変更
+        </button>
+      </div>
+      <p class="hint">このIDを相手に伝えてください。</p>
+    </div>
+
+    <!-- パネルC: ID変更モード -->
+    <div id="panel-edit" style="display:none;">
+      <div class="id-edit-warn">⚠ IDを変更すると現在の接続が切断されます。</div>
+      <div class="row">
+        <input type="text" id="id-edit-input" placeholder="新しいIDを入力..." maxlength="64" autocomplete="off" spellcheck="false">
+        <button class="primary" id="id-save-btn">保存</button>
+        <button id="id-cancel-btn">キャンセル</button>
+      </div>
+      <div class="err-msg" id="id-edit-err"></div>
+    </div>
+  </div>
+
+  <!-- 相手のIDで接続 -->
+  <div class="card">
+    <div class="card-label">相手のIDで接続</div>
+    <div class="row">
+      <input type="text" id="peer-input" placeholder="相手のIDを入力..." autocomplete="off" spellcheck="false">
+      <button class="primary" id="connect-btn">接続</button>
+      <button class="danger" id="disconnect-btn" style="display:none;">切断</button>
+    </div>
+    <div id="conn-status" style="margin-top:10px;display:none;">
+      <span class="badge badge-amber" id="conn-badge">接続中...</span>
+    </div>
+  </div>
+
+  <!-- 送信 -->
+  <div class="card">
+    <div class="card-label">ファイルを送信</div>
+    <div id="send-disabled-hint" class="hint" style="color:var(--amber);">↑ まず相手のIDで接続してください</div>
+    <div id="send-area" class="disabled-overlay">
+      <div class="drop-zone" id="drop-zone">
+        <input type="file" id="file-input">
+        <div class="drop-icon">📂</div>
+        <div class="drop-text">クリックまたはドラッグ＆ドロップ</div>
+        <div class="drop-hint">すべてのファイル形式に対応</div>
+      </div>
+      <div class="file-selected" id="file-selected">
+        <div class="file-icon" id="file-icon">📄</div>
+        <div class="file-info">
+          <div class="file-name" id="file-name-display">—</div>
+          <div class="file-size" id="file-size-display">—</div>
+        </div>
+        <button id="clear-file-btn" style="padding:0 10px;height:32px;font-size:16px;">×</button>
+      </div>
+      <div style="margin-top:10px;">
+        <button class="primary" id="send-btn" style="width:100%;justify-content:center;height:44px;font-size:13px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          送信する
+        </button>
+      </div>
+      <div class="progress-wrap" id="send-progress">
+        <div class="progress-label">
+          <span id="send-progress-label">送信中...</span>
+          <span id="send-progress-pct">0%</span>
+        </div>
+        <div class="progress-bar-track"><div class="progress-bar-fill" id="send-progress-bar"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 受信 -->
+  <div class="card">
+    <div class="card-label">受信したファイル</div>
+    <div id="recv-progress-wrap" class="progress-wrap" style="margin-bottom:12px;">
+      <div class="progress-label">
+        <span id="recv-progress-label">受信中...</span>
+        <span id="recv-progress-pct">0%</span>
+      </div>
+      <div class="progress-bar-track"><div class="progress-bar-fill" id="recv-progress-bar"></div></div>
+    </div>
+    <div class="recv-list" id="recv-list">
+      <div class="hint" id="recv-empty">まだファイルを受信していません</div>
+    </div>
+  </div>
+
+  <!-- ログ -->
+  <div class="card">
+    <div class="card-label">ログ</div>
+    <div class="log" id="log"></div>
+  </div>
+
+</div>
+<script>
+const CHUNK = 65536;
+const LS_KEY = 'p2p_transfer_my_id';
+const ID_RE = /^[a-zA-Z0-9\-_]{1,64}$/;
+
+let peer = null, conn = null, selectedFile = null;
+let recvMeta = null, recvChunks = [], recvReceived = 0;
+
+/* ─ ユーティリティ ─ */
+function log(msg, type='info') {
+  const el = document.getElementById('log');
+  const t = new Date().toTimeString().slice(0,8);
+  const e = document.createElement('div');
+  e.className = 'log-entry '+type;
+  e.innerHTML = `<span class="log-time">${t}</span><span class="log-msg">${msg}</span>`;
+  el.appendChild(e); el.scrollTop = el.scrollHeight;
+}
+function fmt(b) { return b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(2)+' MB'; }
+function icon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  return {pdf:'📄',jpg:'🖼️',jpeg:'🖼️',png:'🖼️',gif:'🖼️',webp:'🖼️',mp4:'🎬',mov:'🎬',mp3:'🎵',wav:'🎵',zip:'🗜️',rar:'🗜️',gz:'🗜️',doc:'📝',docx:'📝',txt:'📝',xls:'📊',xlsx:'📊',csv:'📊',js:'💻',ts:'💻',py:'💻',html:'💻',json:'💻'}[ext]||'📁';
+}
+function showErr(elId, msg) {
+  const el = document.getElementById(elId);
+  el.textContent = msg; el.style.display = msg ? 'block' : 'none';
+}
+
+/* ─ パネル切替 ─ */
+function showPanel(name) {
+  document.getElementById('panel-setup').style.display = name==='setup' ? 'block' : 'none';
+  document.getElementById('panel-confirmed').style.display = name==='confirmed' ? 'block' : 'none';
+  document.getElementById('panel-edit').style.display = name==='edit' ? 'block' : 'none';
+}
+
+/* ─ PeerJS 初期化 ─ */
+function initPeer(id, onOk, onErr) {
+  const dot = document.getElementById('status-dot');
+  const st  = document.getElementById('status-text');
+  dot.className = 'dot connecting'; st.textContent = '接続中...';
+  if (peer) { try { peer.destroy(); } catch(e){} peer = null; }
+
+  peer = new Peer(id, { config: { iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ]}});
+
+  peer.on('open', myId => {
+    dot.className = 'dot online'; st.textContent = 'オンライン';
+    localStorage.setItem(LS_KEY, myId);
+    log(`オンライン: ${myId}`, 'success');
+    if (onOk) onOk(myId);
+  });
+  peer.on('connection', c => { handleConn(c); log(`${c.peer} から接続されました`, 'info'); });
+  peer.on('error', err => {
+    const taken = err.type==='unavailable-id' || (err.message||'').includes('taken') || (err.message||'').includes('unavailable');
+    dot.className = 'dot error';
+    st.textContent = taken ? 'IDが使用中' : 'エラー';
+    if (!taken) log(`エラー: ${err.message}`, 'error');
+    if (onErr) onErr(taken ? 'このIDは既に使われています。別のIDを入力してください。' : `エラー: ${err.message}`);
+  });
+  peer.on('disconnected', () => { document.getElementById('status-dot').className='dot error'; document.getElementById('status-text').textContent='切断'; });
+}
+
+/* ─ ID設定（初回） ─ */
+function trySetId(inputId, errId, onDone) {
+  const inp = document.getElementById(inputId);
+  const val = inp.value.trim();
+  if (!val) { inp.classList.add('error-input'); showErr(errId,'IDを入力してください'); return; }
+  if (!ID_RE.test(val)) { inp.classList.add('error-input'); showErr(errId,'英数字・ハイフン・アンダースコアのみ使えます'); return; }
+  inp.classList.remove('error-input'); showErr(errId,'');
+  inp.disabled = true;
+  const btn = inputId==='id-input' ? document.getElementById('id-set-btn') : document.getElementById('id-save-btn');
+  btn.disabled = true;
+  initPeer(val,
+    myId => { inp.disabled=false; btn.disabled=false; if(onDone) onDone(myId); },
+    msg  => { inp.classList.add('error-input'); showErr(errId,msg); inp.disabled=false; btn.disabled=false; }
+  );
+}
+
+document.getElementById('id-set-btn').addEventListener('click', () => {
+  trySetId('id-input','id-setup-err', myId => {
+    document.getElementById('my-id').textContent = myId;
+    showPanel('confirmed');
+  });
+});
+document.getElementById('id-input').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('id-set-btn').click(); });
+
+/* ─ ID変更 ─ */
+document.getElementById('change-id-btn').addEventListener('click', () => {
+  document.getElementById('id-edit-input').value = localStorage.getItem(LS_KEY)||'';
+  showErr('id-edit-err','');
+  document.getElementById('id-edit-input').classList.remove('error-input');
+  showPanel('edit');
+  setTimeout(()=>document.getElementById('id-edit-input').focus(),50);
+});
+document.getElementById('id-cancel-btn').addEventListener('click', () => showPanel('confirmed'));
+document.getElementById('id-save-btn').addEventListener('click', () => {
+  const currentId = localStorage.getItem(LS_KEY)||'';
+  const newVal = document.getElementById('id-edit-input').value.trim();
+  if (newVal === currentId) { showPanel('confirmed'); return; }
+  if (conn) { conn.close(); conn=null; updateConnUI(false); }
+  trySetId('id-edit-input','id-edit-err', myId => {
+    document.getElementById('my-id').textContent = myId;
+    showPanel('confirmed');
+    log(`IDを変更しました → ${myId}`, 'success');
+  });
+});
+document.getElementById('id-edit-input').addEventListener('keydown', e => {
+  if(e.key==='Enter') document.getElementById('id-save-btn').click();
+  if(e.key==='Escape') document.getElementById('id-cancel-btn').click();
+});
+
+/* ─ コピー ─ */
+document.getElementById('copy-btn').addEventListener('click', () => {
+  navigator.clipboard.writeText(document.getElementById('my-id').textContent).then(() => {
+    const btn = document.getElementById('copy-btn');
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> コピー済み';
+    setTimeout(()=>btn.innerHTML=orig, 1500);
+  });
+});
+
+/* ─ 接続処理 ─ */
+function handleConn(c) {
+  conn = c; updateConnUI(true, c.peer);
+  c.on('open', () => { log(`接続確立: ${c.peer}`,'success'); updateConnUI(true,c.peer); });
+  c.on('data', data => {
+    if (data.type==='meta') {
+      recvMeta=data; recvChunks=[]; recvReceived=0;
+      log(`受信開始: ${data.name} (${fmt(data.size)})`,'info');
+      showRecvProg(true,data.name); updRecvProg(0);
+    } else if (data.type==='chunk') {
+      recvChunks.push(data.data); recvReceived+=data.data.byteLength;
+      updRecvProg(Math.round(recvReceived/recvMeta.size*100));
+    } else if (data.type==='done') {
+      const blob=new Blob(recvChunks,{type:recvMeta.mime});
+      addRecvFile(recvMeta.name,recvMeta.size,URL.createObjectURL(blob));
+      showRecvProg(false); log(`受信完了: ${recvMeta.name}`,'success');
+      recvMeta=null; recvChunks=[]; recvReceived=0;
+    }
+  });
+  c.on('close', ()=>{ conn=null; updateConnUI(false); log('接続が切れました','warn'); });
+  c.on('error', err=>log(`接続エラー: ${err.message}`,'error'));
+}
+
+function updateConnUI(on, peerId) {
+  const badge=document.getElementById('conn-badge'), cs=document.getElementById('conn-status');
+  const db=document.getElementById('disconnect-btn'), cb=document.getElementById('connect-btn');
+  const sa=document.getElementById('send-area'), dh=document.getElementById('send-disabled-hint');
+  cs.style.display='block';
+  if (on) {
+    badge.className='badge badge-green'; badge.textContent=`接続中: ${peerId}`;
+    db.style.display='flex'; cb.style.display='none';
+    sa.classList.remove('disabled-overlay'); dh.style.display='none';
+  } else {
+    badge.className='badge badge-muted'; badge.textContent='未接続';
+    db.style.display='none'; cb.style.display='flex';
+    sa.classList.add('disabled-overlay'); dh.style.display='block';
+  }
+}
+
+function showRecvProg(show, label) {
+  const el=document.getElementById('recv-progress-wrap');
+  if(show){ el.classList.add('show'); document.getElementById('recv-progress-label').textContent=`受信中: ${label}`; document.getElementById('recv-progress-bar').classList.remove('done'); }
+  else el.classList.remove('show');
+}
+function updRecvProg(pct) {
+  document.getElementById('recv-progress-pct').textContent=pct+'%';
+  const bar=document.getElementById('recv-progress-bar'); bar.style.width=pct+'%';
+  if(pct>=100) bar.classList.add('done');
+}
+function addRecvFile(name,size,url) {
+  const empty=document.getElementById('recv-empty'); if(empty) empty.remove();
+  const list=document.getElementById('recv-list'), item=document.createElement('div');
+  item.className='recv-item';
+  item.innerHTML=`<div class="recv-header"><span style="font-size:18px;">${icon(name)}</span><span class="recv-name">${name}</span><span class="recv-size">${fmt(size)}</span><span class="badge badge-green">完了</span></div><a class="dl-btn" href="${url}" download="${name}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>ダウンロード</a>`;
+  list.insertBefore(item, list.firstChild);
+}
+
+/* ─ 送信 ─ */
+async function sendFile(file) {
+  if(!conn||!conn.open){ log('接続がありません','error'); return; }
+  const btn=document.getElementById('send-btn'), prog=document.getElementById('send-progress');
+  const pctEl=document.getElementById('send-progress-pct'), bar=document.getElementById('send-progress-bar');
+  const lbl=document.getElementById('send-progress-label');
+  btn.disabled=true; prog.classList.add('show'); bar.classList.remove('done'); bar.style.width='0%';
+  lbl.textContent=`送信中: ${file.name}`;
+  log(`送信開始: ${file.name} (${fmt(file.size)})`,'info');
+  conn.send({type:'meta',name:file.name,size:file.size,mime:file.type||'application/octet-stream'});
+  const buffer=await file.arrayBuffer(), total=buffer.byteLength; let offset=0;
+  function next() {
+    if(offset>=total){ conn.send({type:'done'}); bar.classList.add('done'); bar.style.width='100%'; pctEl.textContent='100%'; lbl.textContent='送信完了！'; btn.disabled=false; log(`送信完了: ${file.name}`,'success'); setTimeout(()=>prog.classList.remove('show'),2000); return; }
+    const chunk=buffer.slice(offset,offset+CHUNK); conn.send({type:'chunk',data:chunk}); offset+=chunk.byteLength;
+    bar.style.width=Math.round(offset/total*100)+'%'; pctEl.textContent=Math.round(offset/total*100)+'%';
+    setTimeout(next,0);
+  }
+  next();
+}
+
+/* ─ ファイル選択 ─ */
+function setFile(file) {
+  selectedFile=file; document.getElementById('file-selected').classList.add('show');
+  document.getElementById('file-icon').textContent=icon(file.name);
+  document.getElementById('file-name-display').textContent=file.name;
+  document.getElementById('file-size-display').textContent=fmt(file.size);
+}
+document.getElementById('file-input').addEventListener('change',e=>{ if(e.target.files[0]) setFile(e.target.files[0]); });
+const dz=document.getElementById('drop-zone');
+dz.addEventListener('dragover',e=>{ e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
+dz.addEventListener('drop',e=>{ e.preventDefault(); dz.classList.remove('dragover'); if(e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]); });
+document.getElementById('clear-file-btn').addEventListener('click',()=>{ selectedFile=null; document.getElementById('file-selected').classList.remove('show'); document.getElementById('file-input').value=''; });
+document.getElementById('send-btn').addEventListener('click',()=>{ if(!selectedFile){ log('ファイルを選択してください','warn'); return; } sendFile(selectedFile); });
+
+/* ─ 接続/切断ボタン ─ */
+document.getElementById('connect-btn').addEventListener('click',()=>{
+  const pid=document.getElementById('peer-input').value.trim();
+  if(!pid){ log('相手のIDを入力してください','warn'); return; }
+  if(!peer||!peer.open){ log('まず自分のIDを設定してください','warn'); return; }
+  log(`${pid} に接続中...`,'info'); handleConn(peer.connect(pid,{reliable:true}));
+});
+document.getElementById('peer-input').addEventListener('keydown',e=>{ if(e.key==='Enter') document.getElementById('connect-btn').click(); });
+document.getElementById('disconnect-btn').addEventListener('click',()=>{ if(conn) conn.close(); conn=null; updateConnUI(false); log('切断しました','warn'); });
+
+/* ─ 起動: localStorage確認 ─ */
+(function boot() {
+  const saved = localStorage.getItem(LS_KEY);
+  if (saved) {
+    document.getElementById('status-text').textContent = `前回のID "${saved}" で接続中...`;
+    initPeer(saved,
+      myId => { document.getElementById('my-id').textContent=myId; showPanel('confirmed'); },
+      msg  => {
+        log(`前回のID "${saved}" は利用不可`, 'warn');
+        localStorage.removeItem(LS_KEY);
+        document.getElementById('id-input').value = saved;
+        showPanel('setup');
+        showErr('id-setup-err', 'このIDは現在使用できません。別のIDを試してください。');
+        document.getElementById('id-input').classList.add('error-input');
+        document.getElementById('status-dot').className = 'dot connecting';
+        document.getElementById('status-text').textContent = 'IDを設定してください';
+      }
+    );
+  } else {
+    showPanel('setup');
+  }
+})();
+</script>
+</body>
+</html>
