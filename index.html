@@ -56,8 +56,8 @@
   button.danger:hover { background: #2a0e0e; border-color: var(--red); color: var(--red); }
   button.warn-btn { border-color: rgba(245,158,11,0.4); color: var(--amber); }
   button.warn-btn:hover { background: rgba(245,158,11,0.1); border-color: var(--amber); }
-  .row { display: flex; gap: 8px; align-items: stretch; }
-  input[type="text"] { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: var(--mono); font-size: 14px; padding: 10px 14px; outline: none; transition: border-color 0.15s; height: 42px; }
+  .row { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
+  input[type="text"] { flex: 1; min-width: 120px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: var(--mono); font-size: 14px; padding: 10px 14px; outline: none; transition: border-color 0.15s; height: 42px; }
   input[type="text"]:focus { border-color: var(--accent); }
   input[type="text"]::placeholder { color: var(--muted); font-size: 13px; }
   input.error-input { border-color: var(--red) !important; }
@@ -103,6 +103,14 @@
   .badge-muted { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
   .disabled-overlay { opacity: 0.4; pointer-events: none; }
   .hint { font-size: 12px; color: var(--muted); line-height: 1.6; padding: 8px 0; }
+
+  @media (max-width: 500px) {
+    #panel-setup .row button,
+    #panel-edit .row button { flex: 1; justify-content: center; }
+    #panel-edit .row { flex-wrap: wrap; }
+    #panel-edit .row input[type="text"] { flex: 1 1 100%; }
+    #panel-edit .row button { flex: 1 1 0; }
+  }
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
@@ -243,7 +251,8 @@
 
 </div>
 <script>
-const CHUNK = 65536;
+const CHUNK = 262144;      // 256KB — 大きいほど効率的
+const MAX_BUFFER = 1048576; // 1MB — これ以上溜まったら待つ
 const LS_KEY = 'p2p_transfer_my_id';
 const ID_RE = /^[a-zA-Z0-9\-_]{1,64}$/;
 
@@ -432,11 +441,31 @@ async function sendFile(file) {
   log(`送信開始: ${file.name} (${fmt(file.size)})`,'info');
   conn.send({type:'meta',name:file.name,size:file.size,mime:file.type||'application/octet-stream'});
   const buffer=await file.arrayBuffer(), total=buffer.byteLength; let offset=0;
+
+  // バックプレッシャー制御: 受信側が追いつくまで待つ
+  const dc = conn.dataChannel;
+  if (dc) dc.bufferedAmountLowThreshold = MAX_BUFFER / 2;
+
   function next() {
-    if(offset>=total){ conn.send({type:'done'}); bar.classList.add('done'); bar.style.width='100%'; pctEl.textContent='100%'; lbl.textContent='送信完了！'; btn.disabled=false; log(`送信完了: ${file.name}`,'success'); setTimeout(()=>prog.classList.remove('show'),2000); return; }
-    const chunk=buffer.slice(offset,offset+CHUNK); conn.send({type:'chunk',data:chunk}); offset+=chunk.byteLength;
-    bar.style.width=Math.round(offset/total*100)+'%'; pctEl.textContent=Math.round(offset/total*100)+'%';
-    setTimeout(next,0);
+    if (offset >= total) {
+      conn.send({type:'done'});
+      bar.classList.add('done'); bar.style.width='100%'; pctEl.textContent='100%';
+      lbl.textContent='送信完了！'; btn.disabled=false;
+      log(`送信完了: ${file.name}`,'success');
+      setTimeout(()=>prog.classList.remove('show'),2000);
+      return;
+    }
+    // バッファが溜まりすぎたら bufferedamountlow イベントまで待機
+    if (dc && dc.bufferedAmount > MAX_BUFFER) {
+      dc.addEventListener('bufferedamountlow', next, {once:true});
+      return;
+    }
+    const chunk=buffer.slice(offset, offset+CHUNK);
+    conn.send({type:'chunk', data:chunk});
+    offset += chunk.byteLength;
+    const pct = Math.round(offset/total*100);
+    bar.style.width=pct+'%'; pctEl.textContent=pct+'%';
+    setTimeout(next, 0);
   }
   next();
 }
